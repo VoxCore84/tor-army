@@ -1,36 +1,68 @@
 #!/usr/bin/env python3
-"""Generate DB2 Pre-Filtered ID Lists for Lambda Tor Army
+"""Generate DB2 Pre-Filtered ID Lists for Tor Army
 
-Reads Wago DB2 CSVs and outputs one ID list per entity type.
-Only IDs that actually exist in the DB2 data are included —
-this eliminates 35-40% of wasted requests vs brute-force ID ranges.
+Reads Wago DB2 CSVs (exported from https://wago.tools/) and outputs one
+ID list per entity type. Only IDs that actually exist in the DB2 data are
+included — this eliminates 35-40% of wasted requests vs brute-force ranges.
 
-Modes:
-  --full           Generate full ID lists (default, 721K+ IDs)
-  --build-delta X  Compare current build against old build X, output only new/changed IDs
-  --stats          Show counts only, don't write files
+How to get the CSVs:
+  1. Go to https://wago.tools/db2 and click "Export All" for each DB2 table
+  2. Or use TACT/CASC extractors to dump client DB2 files to CSV
+  3. Place CSVs in a directory (e.g. csv/enUS/)
+  4. Run: python generate_id_lists.py --csv-dir csv/enUS/
+
+CSV naming: {TableName}-enUS.csv (e.g. SpellName-enUS.csv, Creature-enUS.csv)
 
 Output:
-  Full mode:  wago/id_lists/{target}.txt
-  Delta mode: wago/id_lists/delta_{current_build}/{target}.txt
+  id_lists/{target}.txt — one ID per line
 
 Usage:
-    python generate_id_lists.py                          # Full lists
-    python generate_id_lists.py --build-delta 66263      # Delta only
-    python generate_id_lists.py --stats                  # Show counts
-    python generate_id_lists.py --targets npc,quest      # Specific targets
+    python generate_id_lists.py --csv-dir path/to/csvs
+    python generate_id_lists.py --csv-dir path/to/csvs --targets npc,quest
+    python generate_id_lists.py --csv-dir path/to/csvs --stats
 """
 
 import argparse
 import csv
+import os
 import sys
 from pathlib import Path
 
-# Add wago/ to path for wago_common
-sys.path.insert(0, str(Path(__file__).parent))
-from wago_common import load_wago_csv, WAGO_CSV_DIR, CURRENT_BUILD, VERIFIED_BUILD
-
 OUTPUT_DIR = Path(__file__).parent / "id_lists"
+
+# CSV directory — set via --csv-dir flag or WAGO_CSV_DIR env var
+WAGO_CSV_DIR: Path | None = None
+
+_csv_cache: dict[str, dict] = {}
+
+
+def load_wago_csv(name: str) -> dict[int, dict]:
+    """Load a Wago CSV into a dict keyed by ID. Results are cached."""
+    if name in _csv_cache:
+        return _csv_cache[name]
+
+    if WAGO_CSV_DIR is None:
+        print(f"ERROR: No CSV directory set. Use --csv-dir or set WAGO_CSV_DIR env var.",
+              file=sys.stderr)
+        return {}
+
+    path = WAGO_CSV_DIR / f"{name}-enUS.csv"
+    if not path.exists():
+        print(f"  [WARN] CSV not found: {path}", file=sys.stderr)
+        _csv_cache[name] = {}
+        return {}
+
+    data = {}
+    with open(path, "r", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                rid = int(row["ID"])
+                data[rid] = row
+            except (KeyError, ValueError):
+                continue
+    _csv_cache[name] = data
+    return data
 
 # ---------------------------------------------------------------------------
 # Target -> DB2 table mappings
@@ -257,17 +289,35 @@ def validate_sync():
 
 def main():
     parser = argparse.ArgumentParser(description="Generate DB2 pre-filtered ID lists")
+    parser.add_argument("--csv-dir", type=str, default=None,
+                        help="Path to Wago DB2 CSVs (or set WAGO_CSV_DIR env var)")
     parser.add_argument("--targets", type=str, default=None,
                         help="Comma-separated targets (default: all)")
     parser.add_argument("--stats", action="store_true",
                         help="Show counts only, don't write files")
     parser.add_argument("--include-subsets", action="store_true",
                         help="Also generate lists for subset targets (toy, heirloom)")
-    parser.add_argument("--build-delta", type=int, default=None, metavar="OLD_BUILD",
-                        help="Generate delta lists: only new/changed IDs vs OLD_BUILD")
+    parser.add_argument("--build-delta", type=str, default=None, metavar="OLD_CSV_DIR",
+                        help="Generate delta lists: only new/changed IDs vs OLD_CSV_DIR")
     parser.add_argument("--validate", action="store_true",
-                        help="Validate ID range sanity and sync with scraper_v4.py")
+                        help="Validate ID range sanity")
     args = parser.parse_args()
+
+    # Resolve CSV directory
+    global WAGO_CSV_DIR
+    csv_dir = args.csv_dir or os.environ.get("WAGO_CSV_DIR")
+    if not csv_dir:
+        print("ERROR: No CSV directory specified.")
+        print("  Use: python generate_id_lists.py --csv-dir path/to/csvs/")
+        print("  Or set the WAGO_CSV_DIR environment variable.")
+        print()
+        print("  CSVs can be exported from https://wago.tools/db2")
+        print("  Expected naming: {TableName}-enUS.csv (e.g. SpellName-enUS.csv)")
+        sys.exit(1)
+    WAGO_CSV_DIR = Path(csv_dir)
+    if not WAGO_CSV_DIR.exists():
+        print(f"ERROR: CSV directory does not exist: {WAGO_CSV_DIR}")
+        sys.exit(1)
 
     all_targets = list(TARGET_DB2_MAP.keys())
     if args.include_subsets:
@@ -281,13 +331,12 @@ def main():
     # Delta mode setup
     old_dir = None
     if args.build_delta:
-        old_dir = find_csv_dir(args.build_delta)
-        if not old_dir:
-            print(f"ERROR: Cannot find CSVs for old build {args.build_delta}")
-            print(f"  Looked in: merged_csv/, tact_csv/, wago_csv/")
+        old_dir = Path(args.build_delta)
+        if not old_dir.exists():
+            print(f"ERROR: Old CSV directory does not exist: {old_dir}")
             sys.exit(1)
-        out_dir = OUTPUT_DIR / f"delta_{VERIFIED_BUILD}"
-        print(f"BUILD DELTA MODE: {args.build_delta} -> {VERIFIED_BUILD}")
+        out_dir = OUTPUT_DIR / "delta"
+        print(f"BUILD DELTA MODE")
         print(f"  Old CSVs: {old_dir}")
         print(f"  New CSVs: {WAGO_CSV_DIR}")
         print(f"  Output:   {out_dir}")
@@ -295,7 +344,6 @@ def main():
         out_dir = OUTPUT_DIR
         print(f"DB2 Pre-Filter ID List Generator")
         print(f"  CSV source: {WAGO_CSV_DIR}")
-        print(f"  Build:      {VERIFIED_BUILD}")
         print(f"  Output dir: {out_dir}")
 
     # Cross-check target lists stay in sync
@@ -365,7 +413,7 @@ def main():
         total_combined = total_new + total_changed
         print(f"  New IDs:      {total_new:>9,}")
         print(f"  Changed IDs:  {total_changed:>9,}")
-        print(f"  Total delta:  {total_combined:>9,}  (vs {args.build_delta} -> {VERIFIED_BUILD})")
+        print(f"  Total delta:  {total_combined:>9,}")
     else:
         print(f"  Total IDs:    {total_full:>9,}")
         if not args.stats:

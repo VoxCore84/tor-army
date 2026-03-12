@@ -44,23 +44,66 @@ We know because [we built the Lambda version first](https://github.com/VoxCore84
 
 ## Quick Start
 
+### 1. Install dependencies
+
 ```bash
-# Install
 pip install -e .
+```
 
-# Download and install Tor Expert Bundle:
-# https://www.torproject.org/download/tor/
+Requires Python 3.11+. On Windows, use `python` (not `python3` — the Windows App alias has a separate `site-packages` that won't have your installed packages).
 
-# Generate ID lists (requires source CSVs)
-python generate_id_lists.py --csv-dir /path/to/csvs
+### 2. Install Tor Expert Bundle
 
+Download the **Expert Bundle** (not the Browser) from [torproject.org](https://www.torproject.org/download/tor/). Extract it so you have a directory with `tor/tor.exe` inside.
+
+By default, Tor Army looks for a `tor/` directory next to `tor_army.py`. You can override this:
+
+```bash
+# Option A: put Tor next to the script
+tor-army/
+  tor_army.py
+  tor/            # <-- Tor Expert Bundle here
+    tor/tor.exe
+    data/geoip
+    data/geoip6
+
+# Option B: use a flag
+python tor_army.py --tor-dir /path/to/tor-expert-bundle ...
+
+# Option C: use an environment variable
+export TOR_DIR=/path/to/tor-expert-bundle
+```
+
+### 3. Generate ID lists
+
+The scraper needs ID lists to know which pages to fetch. These are generated from Wago DB2 CSV exports.
+
+```bash
+# Export CSVs from https://wago.tools/db2 (or extract from client data files)
+# Place them in a directory — expected naming: {TableName}-enUS.csv
+
+python generate_id_lists.py --csv-dir /path/to/wago-csvs/
+
+# Generate for specific targets only
+python generate_id_lists.py --csv-dir /path/to/wago-csvs/ --targets npc,quest
+
+# Preview counts without writing files
+python generate_id_lists.py --csv-dir /path/to/wago-csvs/ --stats
+```
+
+### 4. Scrape
+
+```bash
 # Launch with defaults (400 Tor instances x 5 workers = 2,000 concurrent)
 python tor_army.py --start-tor --targets spell,item,npc,quest
 
 # Smoke test (10 pages, 5 instances)
 python tor_army.py --start-tor --workers 5 --smoke 10 --targets npc
 
-# List available targets
+# Aggressive config (4,800 concurrent workers)
+python tor_army.py --start-tor --workers 600 --multiplier 8 --targets all
+
+# List available targets with progress
 python tor_army.py --list-targets
 
 # Re-parse cached HTML without network
@@ -69,6 +112,8 @@ python tor_army.py --targets npc --reparse
 # Kill leftover Tor instances
 python tor_army.py --kill-tor
 ```
+
+Output goes to `wowhead_data/{target}/raw/` (parsed JSON) and `wowhead_data/{target}/html/` (cached gzip HTML). The scraper automatically skips IDs that already have output files, so you can stop and resume freely.
 
 ## How It Works
 

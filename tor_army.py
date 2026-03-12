@@ -31,6 +31,7 @@ import argparse
 import asyncio
 import gzip
 import json
+import os
 import random
 import re
 import select
@@ -94,7 +95,11 @@ from stem.control import Controller
 # == Configuration =============================================================
 
 WAGO_DIR = Path(__file__).parent
-TOR_DIR = Path(r"C:\Users\atayl\VoxCore\ExtTools\tor")
+
+# Tor Expert Bundle location — override with --tor-dir flag or TOR_DIR env var
+# Download from: https://www.torproject.org/download/tor/
+_default_tor = Path(os.environ.get("TOR_DIR", "")) if os.environ.get("TOR_DIR") else None
+TOR_DIR = _default_tor or (WAGO_DIR / "tor")
 
 # Expanded fingerprint pool -- more diversity = harder for CF to pattern-match
 FINGERPRINTS = [
@@ -1151,6 +1156,8 @@ def main():
                         help="Start Tor instances before scraping")
     parser.add_argument("--kill-tor", action="store_true",
                         help="Kill all existing Tor instances and exit")
+    parser.add_argument("--tor-dir", type=str, default=None,
+                        help="Path to Tor Expert Bundle (or set TOR_DIR env var)")
 
     parser.add_argument("--workers", type=int, default=400,
                         help="Tor instances to run (default: 400)")
@@ -1183,6 +1190,11 @@ def main():
                         help="Use Stormwind-specific ID files")
 
     args = parser.parse_args()
+
+    # Override TOR_DIR if --tor-dir provided
+    if args.tor_dir:
+        global TOR_DIR
+        TOR_DIR = Path(args.tor_dir)
 
     if args.kill_tor:
         TorFleet.kill_all()
