@@ -163,21 +163,6 @@ def load_csv_from_dir(table_name: str, csv_dir: Path) -> dict[int, dict]:
     return data
 
 
-def find_csv_dir(build_number: int) -> Path | None:
-    """Find the merged CSV directory for a given build number."""
-    base = Path(__file__).parent
-    # Try merged first (best source), then tact, then raw wago
-    for pattern in [
-        f"merged_csv/12.0.1.{build_number}/enUS",
-        f"tact_csv/12.0.1.{build_number}/enUS",
-        f"wago_csv/major_12/12.0.1.{build_number}/enUS",
-    ]:
-        d = base / pattern
-        if d.exists():
-            return d
-    return None
-
-
 # ---------------------------------------------------------------------------
 # Full ID list generation
 # ---------------------------------------------------------------------------
@@ -261,26 +246,25 @@ def write_list(target: str, ids: list[int], out_dir: Path):
 # ---------------------------------------------------------------------------
 
 def validate_sync():
-    """Check that TARGET_DB2_MAP stays in sync with scraper_v4.py TARGET_CONFIGS."""
+    """Check that TARGET_DB2_MAP stays in sync with tor_army.py TARGET_CONFIGS."""
     try:
-        scraper_path = Path(__file__).parent / "scraper_v4.py"
+        scraper_path = Path(__file__).parent / "tor_army.py"
         if not scraper_path.exists():
             return
         text = scraper_path.read_text(encoding="utf-8")
-        # Extract target names from TARGET_CONFIGS dict
         import re
-        scraper_targets = set(re.findall(r'"(\w+)":\s*_cfg\(', text))
+        scraper_targets = set(re.findall(r'"(\w+)":\s*_tcfg\(', text))
         our_targets = set(TARGET_DB2_MAP.keys()) | set(SUBSET_TARGETS.keys())
 
         missing_here = scraper_targets - our_targets
         missing_there = our_targets - scraper_targets
 
         if missing_here:
-            print(f"  [SYNC WARN] Targets in scraper_v4.py but not in generate_id_lists.py:")
+            print(f"  [SYNC WARN] Targets in tor_army.py but not in generate_id_lists.py:")
             for t in sorted(missing_here):
                 print(f"    - {t}")
         if missing_there:
-            print(f"  [SYNC WARN] Targets in generate_id_lists.py but not in scraper_v4.py:")
+            print(f"  [SYNC WARN] Targets in generate_id_lists.py but not in tor_army.py:")
             for t in sorted(missing_there):
                 print(f"    - {t}")
     except Exception:

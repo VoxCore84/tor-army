@@ -54,24 +54,29 @@ Requires Python 3.11+. On Windows, use `python` (not `python3` — the Windows A
 
 ### 2. Install Tor Expert Bundle
 
-Download the **Expert Bundle** (not the Browser) from [torproject.org](https://www.torproject.org/download/tor/). Extract it so you have a directory with `tor/tor.exe` inside.
+**Windows:** Download the **Expert Bundle** (not the Browser) from [torproject.org](https://www.torproject.org/download/tor/). Extract it so you have a directory containing `tor/tor.exe`.
+
+**Linux:** `sudo apt install tor` (Debian/Ubuntu) or `sudo dnf install tor` (Fedora). The binary will be at `/usr/bin/tor`.
+
+**macOS:** `brew install tor`. The binary will be at `/usr/local/bin/tor` or `/opt/homebrew/bin/tor`.
 
 By default, Tor Army looks for a `tor/` directory next to `tor_army.py`. You can override this:
 
 ```bash
-# Option A: put Tor next to the script
+# Option A: put Tor next to the script (Windows Expert Bundle layout)
 tor-army/
   tor_army.py
-  tor/            # <-- Tor Expert Bundle here
-    tor/tor.exe
+  tor/            # <-- extract Tor Expert Bundle here
+    tor/tor.exe   # (Windows) or tor/tor (Linux/Mac)
     data/geoip
     data/geoip6
 
-# Option B: use a flag
-python tor_army.py --tor-dir /path/to/tor-expert-bundle ...
+# Option B: use a flag (works with any Tor installation)
+python tor_army.py --tor-dir /usr/share/tor ...        # Linux package
+python tor_army.py --tor-dir /opt/homebrew/share/tor ...  # macOS Homebrew
 
 # Option C: use an environment variable
-export TOR_DIR=/path/to/tor-expert-bundle
+export TOR_DIR=/path/to/tor
 ```
 
 ### 3. Generate ID lists
@@ -195,9 +200,9 @@ Workers sharing a Tor instance send HTTP/2 streams on a single multiplexed conne
 | `--multiplier` | 5 | Async workers per instance (HTTP/2 streams) |
 | `--delay` | 0.15 | Base delay between requests (seconds) |
 | `--per-circuit` | 150 | Requests before circuit rotation |
-| `--max-waf` | 3 | WAF hits before forced rotation |
 | `--cache-html` | true | Cache raw HTML as gzip |
 | `--targets` | npc | Comma-separated entity types |
+| `--tor-dir` | `./tor/` | Path to Tor Expert Bundle (or set `TOR_DIR` env var) |
 
 ## Scaling Guide
 
@@ -245,8 +250,8 @@ With multiplexing, all workers on the same Tor instance share one TCP connection
 ## Requirements
 
 - Python 3.11+
-- Windows (Linux support possible but untested)
-- [Tor Expert Bundle](https://www.torproject.org/download/tor/)
+- Windows, Linux, or macOS
+- [Tor](https://www.torproject.org/download/tor/) — Expert Bundle (Windows) or system package (Linux/Mac)
 - ~25 MB RAM per Tor instance
 
 ## Related
