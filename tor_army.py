@@ -3,10 +3,11 @@
 
 Major upgrades over v2:
   - Async engine (asyncio + curl_cffi AsyncSession) -- eliminates GIL bottleneck
-  - Worker multiplexing -- N async workers per Tor instance (default 2x)
+  - HTTP/2 multiplexing -- shared session per Tor instance, multiple workers
+    send concurrent streams on one TCP connection (400 FDs instead of 2000)
+  - Worker multiplexing -- N async workers per Tor instance (default 5x)
   - Optimized torrc -- faster circuits, no entry guards, shorter timeouts
   - Per-instance rate limiting -- prevents WAF bursts from shared exit IPs
-  - Session reuse per circuit -- TLS handshake amortized over ~100 requests
   - Jittered exponential backoff -- smarter WAF/error recovery
   - Expanded browser fingerprints (7 browsers incl. Firefox)
   - Max retry cap -- prevents infinite re-queue loops
@@ -15,7 +16,7 @@ Major upgrades over v2:
 
   Performance targets:
   v2: 315K pages/hr (240 workers, threading, GIL)
-  v3: 600K-1M pages/hr (400 instances x 2-3 multiplier, async)
+  v3: 500K-1M pages/hr (400 instances x 5 multiplier, async + HTTP/2)
 
 Usage:
     python scraper_v3.py --start-tor --workers 400 --targets npc
@@ -85,6 +86,7 @@ if sys.platform == "win32":
     select.select = _batched_select
 # ------------------------------------------------------------------------------
 
+from curl_cffi.const import CurlMOpt
 from curl_cffi.requests import AsyncSession
 from stem import Signal
 from stem.control import Controller
@@ -278,18 +280,27 @@ class TorFleet:
         )
 
 
-# == Circuit Manager (per Tor instance) =======================================
+# == Tor Instance (session + circuit + rate limiter) ===========================
 
-class CircuitManager:
-    """Manages circuit rotation and rate limiting for one Tor instance.
+class TorInstance:
+    """Manages one Tor instance: shared HTTP/2 session, circuit rotation,
+    and rate limiting.
 
-    Multiple async workers can share one CircuitManager. The rate limiter
-    ensures the aggregate request rate per exit IP stays within WAF budget.
+    HTTP/2 multiplexing: all workers sharing this instance send requests as
+    concurrent streams on a SINGLE TCP connection. This reduces FD usage from
+    N-per-instance (one per worker) to 1-per-instance, eliminating the
+    Windows select() 512 FD bottleneck at scale.
+
+    curl_cffi's CurlMulti handle pools connections internally. When multiple
+    .get() calls target the same host through the same proxy, libcurl reuses
+    the existing HTTP/2 connection and multiplexes as new streams.
     """
 
-    def __init__(self, instance_id: int, control_port: int,
+    def __init__(self, instance_id: int, socks_port: int, control_port: int,
                  per_circuit: int, min_interval: float):
         self.id = instance_id
+        self.socks_port = socks_port
+        self.proxy = f"socks5h://127.0.0.1:{socks_port}"
         self.control_port = control_port
         self.per_circuit = per_circuit
         self.min_interval = min_interval
@@ -300,18 +311,23 @@ class CircuitManager:
         self._last_request = 0.0
         self._fingerprint = random.choice(FINGERPRINTS)
 
-    async def acquire(self) -> tuple[bool, str]:
-        """Acquire a request slot. Returns (circuit_rotated, fingerprint).
+        # Shared HTTP/2 session — all workers multiplex on this
+        self._session: AsyncSession | None = None
+        self._session_fp: str | None = None
+        self._session_lock = asyncio.Lock()
 
-        Handles both circuit rotation (when budget exhausted) and
-        rate limiting (minimum interval between requests from this IP).
+    async def acquire(self) -> AsyncSession:
+        """Acquire a request slot and return the shared HTTP/2 session.
+
+        Handles circuit rotation (when budget exhausted) and rate limiting
+        (minimum interval between requests from this exit IP). The returned
+        session is shared across all workers — concurrent .get() calls
+        multiplex as HTTP/2 streams on a single connection.
         """
-        rotated = False
-
+        # Check circuit rotation
         async with self._rotation_lock:
             if self._request_count >= self.per_circuit:
                 await self._rotate()
-                rotated = True
             self._request_count += 1
 
         # Rate limit: stagger requests from this exit IP
@@ -323,12 +339,32 @@ class CircuitManager:
                 await asyncio.sleep(self.min_interval - elapsed + jitter)
             self._last_request = time.monotonic()
 
-        return rotated, self._fingerprint
+        return await self._get_session()
 
-    async def force_rotate(self):
-        """Force rotation (called on WAF hit)."""
+    async def handle_waf(self):
+        """Force circuit rotation on WAF hit. Session recreated lazily."""
         async with self._rotation_lock:
             await self._rotate()
+        # Don't close session here — other workers may have in-flight
+        # requests on it. _get_session() will create a new one when it
+        # sees the fingerprint has changed; old session gets GC'd.
+
+    async def _get_session(self) -> AsyncSession:
+        """Get or create the shared session. Creates new on fingerprint change."""
+        async with self._session_lock:
+            if self._session is None or self._session_fp != self._fingerprint:
+                # Old session (if any) gets GC'd naturally — don't close it
+                # as other workers may have in-flight requests on it
+                self._session = AsyncSession(impersonate=self._fingerprint)
+                self._session_fp = self._fingerprint
+                # Enable HTTP/2 multiplexing on the multi handle
+                try:
+                    self._session.acurl.setopt(CurlMOpt.PIPELINING, 2)
+                    self._session.acurl.setopt(CurlMOpt.MAX_HOST_CONNECTIONS, 1)
+                    self._session.acurl.setopt(CurlMOpt.MAX_CONCURRENT_STREAMS, 100)
+                except (AttributeError, Exception):
+                    pass
+            return self._session
 
     async def _rotate(self):
         self._fingerprint = random.choice(FINGERPRINTS)
@@ -343,6 +379,13 @@ class CircuitManager:
                 c.signal(Signal.NEWNYM)
         except Exception:
             time.sleep(1)
+
+    async def close(self):
+        """Close the session. Only call after all workers have finished."""
+        async with self._session_lock:
+            if self._session:
+                await self._session.close()
+                self._session = None
 
 
 # == Page Parsers ==============================================================
@@ -801,17 +844,17 @@ class StatsTracker:
 
 async def async_worker(
     worker_id: int,
-    circuit_mgr: CircuitManager,
+    tor: TorInstance,
     work_queue: asyncio.PriorityQueue,
-    socks_port: int,
     base_delay: float,
     stats: StatsTracker,
     cache_html: bool,
 ):
-    """Async worker coroutine. Multiple can share one CircuitManager/Tor instance."""
-    proxy = f"socks5h://127.0.0.1:{socks_port}"
-    session: AsyncSession | None = None
-    current_fp: str | None = None
+    """Async worker coroutine. Multiple workers share one TorInstance.
+
+    The TorInstance provides a shared AsyncSession — all workers on the same
+    Tor instance send HTTP/2 streams on a single multiplexed connection.
+    """
     consecutive_errors = 0
 
     while True:
@@ -838,15 +881,8 @@ async def async_worker(
             await stats.record("dropped", target)
             continue
 
-        # Acquire rate-limited slot (may trigger circuit rotation)
-        rotated, fp = await circuit_mgr.acquire()
-
-        # New session on fingerprint change (= circuit rotation)
-        if session is None or fp != current_fp:
-            if session:
-                await session.close()
-            session = AsyncSession(impersonate=fp)
-            current_fp = fp
+        # Acquire rate-limited slot + shared HTTP/2 session
+        session = await tor.acquire()
 
         # Adaptive delay with jitter
         delay = stats.get_adaptive_delay(base_delay)
@@ -857,7 +893,7 @@ async def async_worker(
         try:
             r = await session.get(
                 url, timeout=20,
-                proxies={"https": proxy, "http": proxy},
+                proxies={"https": tor.proxy, "http": tor.proxy},
             )
         except Exception:
             await stats.record("error", target)
@@ -883,12 +919,7 @@ async def async_worker(
                 work_item.priority + 5, stats.next_seq(),
                 target, item_id, work_item.retries + 1,
             ))
-            # Force rotation + new session
-            await circuit_mgr.force_rotate()
-            if session:
-                await session.close()
-            session = None
-            current_fp = None
+            await tor.handle_waf()
             continue
 
         if r.status_code == 404:
@@ -922,10 +953,6 @@ async def async_worker(
             "utf-8",
         )
         await stats.record("ok", target)
-
-    # Cleanup
-    if session:
-        await session.close()
 
 
 def _write_gzip(path: Path, data: bytes):
@@ -1044,10 +1071,11 @@ async def async_main(args):
     total = work_queue.qsize()
     eff = args.workers * args.multiplier
 
-    print(f"Tor Army v3 -- Async Swarm")
+    print(f"Tor Army v3 -- Async Swarm (HTTP/2 Multiplexed)")
     print(f"  Tor instances:     {args.workers}")
     print(f"  Workers/instance:  {args.multiplier}")
     print(f"  Effective workers: {eff}")
+    print(f"  HTTP/2 connections:{args.workers} (multiplexed, {eff} streams)")
     print(f"  Targets:           {', '.join(targets)}")
     print(f"  Total pages:       {total:,}")
     print(f"  Base delay:        {args.delay}s (adaptive)")
@@ -1067,32 +1095,34 @@ async def async_main(args):
         fleet = TorFleet(args.workers)
         fleet.start()
 
-    # Create workers
+    # Create TorInstances + workers
     stats = StatsTracker(total)
     min_interval = args.delay / args.multiplier
     tasks = []
+    tor_instances = []
 
-    print(f"\nLaunching {eff} async workers...")
+    print(f"\nLaunching {eff} async workers ({args.workers} HTTP/2 connections)...")
 
     for tor_id in range(args.workers):
         socks_port = 9050 + tor_id * 2
         control_port = 9051 + tor_id * 2
 
-        circuit_mgr = CircuitManager(
+        tor = TorInstance(
             instance_id=tor_id,
+            socks_port=socks_port,
             control_port=control_port,
             per_circuit=args.per_circuit,
             min_interval=min_interval,
         )
+        tor_instances.append(tor)
 
         for mux_id in range(args.multiplier):
             wid = tor_id * args.multiplier + mux_id
             tasks.append(asyncio.create_task(
                 async_worker(
                     worker_id=wid,
-                    circuit_mgr=circuit_mgr,
+                    tor=tor,
                     work_queue=work_queue,
-                    socks_port=socks_port,
                     base_delay=args.delay,
                     stats=stats,
                     cache_html=args.cache_html,
@@ -1105,6 +1135,10 @@ async def async_main(args):
 
     await asyncio.gather(*tasks)
     print(stats.summary())
+
+    # Cleanup shared sessions
+    for tor in tor_instances:
+        await tor.close()
 
     if fleet:
         fleet.stop()
@@ -1120,8 +1154,8 @@ def main():
 
     parser.add_argument("--workers", type=int, default=400,
                         help="Tor instances to run (default: 400)")
-    parser.add_argument("--multiplier", type=int, default=3,
-                        help="Async workers per Tor instance (default: 3)")
+    parser.add_argument("--multiplier", type=int, default=5,
+                        help="Async workers per Tor instance (default: 5)")
 
     parser.add_argument("--targets", type=str, default="npc",
                         help="Comma-separated targets, or 'all' for all 39 types")

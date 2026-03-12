@@ -15,13 +15,14 @@ We built a [Lambda Swarm](https://github.com/VoxCore84/lambda-swarm) first — 3
 
 ## Features
 
+- **HTTP/2 multiplexing** — shared session per Tor instance, N workers send concurrent streams on one TCP connection (400 FDs instead of 2,000+)
 - **Async engine** — `asyncio` + `curl_cffi` eliminates GIL bottleneck
-- **Worker multiplexing** — N async workers per Tor instance (default 3x)
+- **Worker multiplexing** — N async workers per Tor instance (default 5x)
 - **Browser TLS fingerprints** — 7 profiles (Chrome, Edge, Safari, Firefox) via `curl_cffi`
 - **Adaptive WAF throttling** — auto-adjusts delay based on block rate per minute
 - **Per-instance rate limiting** — prevents WAF bursts from shared exit IPs
 - **Circuit rotation** — fresh IP every 150 requests per instance
-- **Windows `select()` bypass** — monkey-patches the 512 FD limit for 1,200+ workers
+- **Windows `select()` bypass** — monkey-patches the 512 FD limit as safety net
 - **Live dashboard** — real-time rate, WAF/min, per-target breakdown, ETA
 - **HTML caching** — gzip-compressed raw HTML for re-parsing without re-scraping
 - **39 Wowhead entity parsers** — spells, items, NPCs, quests, transmog, and 34 more
@@ -38,7 +39,7 @@ pip install -e .
 # Generate ID lists (requires source CSVs)
 python generate_id_lists.py --csv-dir /path/to/csvs
 
-# Launch with defaults (400 Tor instances × 3 workers = 1,200 concurrent)
+# Launch with defaults (400 Tor instances × 5 workers = 2,000 concurrent)
 python tor_army.py --start-tor --targets spell,item,npc,quest
 
 # Smoke test (10 pages, 5 instances)
@@ -66,9 +67,9 @@ python tor_army.py --kill-tor
 │  └────┬────┘ └────┬────┘       └────┬────┘    │
 │       │           │                 │          │
 │  ┌────┴────┐ ┌────┴────┐       ┌───┴─────┐   │
-│  │Circuit  │ │Circuit  │  ...  │Circuit  │   │
-│  │Manager 1│ │Manager 1│       │Manager N│   │
-│  │(shared) │ │(shared) │       │(shared) │   │
+│  │  Tor    │ │  Tor    │  ...  │  Tor    │   │
+│  │Instance1│ │Instance1│       │InstanceN│   │
+│  │(HTTP/2) │ │(HTTP/2) │       │(HTTP/2) │   │
 │  └────┬────┘ └────┬────┘       └────┬────┘   │
 └───────┼───────────┼─────────────────┼─────────┘
         │           │                 │
@@ -92,14 +93,14 @@ python tor_army.py --kill-tor
                     └─────────────────┘
 ```
 
-Workers sharing a Tor instance share its exit IP but are rate-limited by CircuitManager to prevent WAF bursts. Each instance rotates circuits every 150 requests for IP freshness.
+Workers sharing a Tor instance send HTTP/2 streams on a single multiplexed connection, reducing FD count from N-per-instance to 1-per-instance. Rate limiting prevents WAF bursts per exit IP. Each instance rotates circuits every 150 requests for IP freshness.
 
 ## Configuration
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--workers` | 400 | Tor instances to run (~25MB RAM each) |
-| `--multiplier` | 3 | Async workers per instance |
+| `--multiplier` | 5 | Async workers per instance (HTTP/2 streams) |
 | `--delay` | 0.15 | Base delay between requests (seconds) |
 | `--per-circuit` | 150 | Requests before circuit rotation |
 | `--max-waf` | 3 | WAF hits before forced rotation |
@@ -110,10 +111,10 @@ Workers sharing a Tor instance share its exit IP but are rate-limited by Circuit
 
 | Config | Workers | RAM | Expected Rate |
 |--------|---------|-----|---------------|
-| 240×2 | 480 | ~6 GB | ~270K/hr |
-| 400×3 | 1,200 | ~10 GB | ~500K+/hr |
-| 600×3 | 1,800 | ~15 GB | ~600-800K/hr |
-| 800×2 | 1,600 | ~20 GB | ~600-800K/hr |
+| 240×5 | 1,200 | ~6 GB | ~400K/hr |
+| 400×5 | 2,000 | ~10 GB | ~500K+/hr |
+| 600×5 | 3,000 | ~15 GB | ~600-800K/hr |
+| 800×5 | 4,000 | ~20 GB | ~600-800K/hr |
 
 Past ~600 instances, returns diminish — there are only ~1,000-1,500 Tor exit nodes globally, so you start getting duplicate exit IPs.
 
