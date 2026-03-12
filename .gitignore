@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Scraper runtime data
+wowhead_data/
+id_lists/
+output/
+reports/
+*.log
+
+# Tor runtime data
+ExtTools/tor/data*/
+ExtTools/tor/torrc/
