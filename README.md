@@ -6,7 +6,7 @@ Massively parallel async web scraper that routes through a fleet of Tor instance
 
 | Approach | Throughput | WAF Block Rate | Why |
 |----------|-----------|----------------|-----|
-| **Tor Army** | **380K+ pages/hr** | **<1%** | Tor exit nodes are residential/diverse IPs — Cloudflare trusts them |
+| **Tor Army** | **500K+ pages/hr** | **<1%** | Tor exit nodes are residential/diverse IPs — Cloudflare trusts them |
 | AWS Lambda | 2,500 pages/hr | **90%+** | Cloudflare maintains blocklists of all AWS IP ranges |
 
 We built a [Lambda Swarm](https://github.com/VoxCore84/lambda-swarm) first — 3,000 concurrent Lambdas across 3 AWS regions with perfect browser TLS fingerprint impersonation. Cloudflare didn't care. 90% WAF rate. The same fingerprint impersonation through Tor exit nodes? Under 1% WAF.
@@ -111,9 +111,9 @@ Workers sharing a Tor instance share its exit IP but are rate-limited by Circuit
 | Config | Workers | RAM | Expected Rate |
 |--------|---------|-----|---------------|
 | 240×2 | 480 | ~6 GB | ~270K/hr |
-| 400×3 | 1,200 | ~10 GB | ~400-600K/hr |
-| 600×3 | 1,800 | ~15 GB | ~500-700K/hr |
-| 800×2 | 1,600 | ~20 GB | ~500-700K/hr |
+| 400×3 | 1,200 | ~10 GB | ~500K+/hr |
+| 600×3 | 1,800 | ~15 GB | ~600-800K/hr |
+| 800×2 | 1,600 | ~20 GB | ~600-800K/hr |
 
 Past ~600 instances, returns diminish — there are only ~1,000-1,500 Tor exit nodes globally, so you start getting duplicate exit IPs.
 
