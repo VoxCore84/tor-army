@@ -1,275 +1,147 @@
 # Tor Army v3
 
-Massively parallel async web scraper that routes through a fleet of Tor instances for IP diversity. Built for scraping Cloudflare-protected sites where cloud IPs (AWS Lambda, GCP, etc.) get instantly blocked.
+Massively parallel async web scraper that routes through a fleet of Tor instances for IP diversity. Built for scraping Cloudflare-protected sites where cloud IPs get instantly blocked.
 
-**500K-1M pages/hour. Under 1% WAF block rate. Zero cost. One machine.**
+I originally built this to scrape [Wowhead](https://www.wowhead.com/) for [TrinityCore](https://www.trinitycore.org/) private server data. The 39 entity parsers and ID list generator are Wowhead-specific, but the scraping engine works for any target — see [Adapting to Other Targets](#adapting-to-other-targets).
 
-## Why You Need This
+## Why Tor?
 
-Every other approach to scraping Cloudflare-protected sites at scale either doesn't work or costs a fortune:
+Cloudflare blocklists all major cloud IP ranges (AWS, GCP, Azure, etc.). I [tried Lambda first](https://github.com/VoxCore84/lambda-swarm) — 3,000 concurrent Lambdas with perfect browser TLS fingerprints. 90% WAF rate. The same fingerprints through Tor? Under 1%.
 
-| Approach | Speed | WAF Block Rate | Monthly Cost | Verdict |
-|----------|-------|----------------|-------------|---------|
-| **Tor Army** | **500K-1M/hr** | **<1%** | **$0** | Works |
-| Rotating proxy service (Bright Data, Oxylabs) | ~100K/hr | ~5-15% | $300-1,000+ | Works but expensive |
-| Residential proxy pool | ~50K/hr | ~5% | $50-500 | Works but expensive |
-| AWS Lambda / GCP Functions | 2,500/hr | **90%+** | $25+ | **Doesn't work** |
-| Datacenter proxies | ~10K/hr | **80%+** | $20-100 | **Doesn't work** |
-| Selenium / Playwright | ~500/hr | ~10% | $0 | Too slow to scale |
-| Scrapy + free proxies | ~5K/hr | ~50%+ | $0 | Unreliable |
+Tor exit nodes run on residential ISPs, university networks, and volunteer hosts. Cloudflare doesn't blocklist them the way it does datacenters.
 
-**Why Tor works when everything else doesn't:**
-
-Cloudflare maintains blocklists of known datacenter IP ranges — AWS, GCP, Azure, DigitalOcean, Hetzner, OVH, all of them. Your Lambda has a perfect Chrome TLS fingerprint? Doesn't matter. The IP is flagged before the request even reaches the server.
-
-Tor exit nodes are different. They're run by volunteers on residential ISPs, university networks, and privacy-focused hosts worldwide. Cloudflare sees ~1,500 diverse IPs from across the globe — not a datacenter block. The same browser fingerprint impersonation that gets 90% WAF'd from AWS gets **under 1% WAF'd** through Tor.
-
-We know because [we built the Lambda version first](https://github.com/VoxCore84/lambda-swarm). 3,000 concurrent Lambdas across 3 AWS regions, perfect `curl_cffi` browser fingerprints, zstd compression, the works. Cloudflare didn't care. 90% blocked. Switched to Tor with the same fingerprints? Under 1%.
-
-**The IP matters more than the fingerprint.**
+**Measured performance:** 500K+ pages/hr at 400 Tor instances on a single machine. Under 1% Cloudflare block rate.
 
 ## Features
 
-- **HTTP/2 multiplexing** — shared session per Tor instance, workers send concurrent streams on one TCP connection (400 FDs instead of 2,000+)
-- **Async engine** — `asyncio` + `curl_cffi` eliminates GIL bottleneck
-- **Worker multiplexing** — N async workers per Tor instance (default 5x)
+- **HTTP/2 multiplexing** — shared session per Tor instance, workers send concurrent streams on one connection
+- **Async engine** — `asyncio` + `curl_cffi`, no GIL bottleneck
 - **Browser TLS fingerprints** — 7 profiles (Chrome, Edge, Safari, Firefox) via `curl_cffi`
-- **Adaptive WAF throttling** — auto-adjusts delay based on real-time block rate per minute
-- **Per-instance rate limiting** — prevents WAF bursts from shared exit IPs
-- **Circuit rotation** — fresh IP every 150 requests per instance
-- **Windows `select()` bypass** — monkey-patches the 512 FD limit as safety net for extreme configs
-- **Live dashboard** — real-time rate, WAF/min, per-target breakdown, ETA
+- **Adaptive WAF throttling** — adjusts delay based on real-time block rate
+- **Circuit rotation** — fresh exit IP every 150 requests per instance
 - **HTML caching** — gzip-compressed raw HTML for re-parsing without re-scraping
-- **39 Wowhead entity parsers** — spells, items, NPCs, quests, transmog, and 34 more
+- **39 Wowhead entity parsers** — spells, items, NPCs, quests, transmog, and more
 
 ## Quick Start
 
-### 1. Install dependencies
+### 1. Install
 
 ```bash
 pip install -e .
 ```
 
-Requires Python 3.11+. On Windows, use `python` (not `python3` — the Windows App alias has a separate `site-packages` that won't have your installed packages).
+Requires Python 3.11+. On Windows, use `python` not `python3` (the Windows Store alias uses separate site-packages).
 
-### 2. Install Tor Expert Bundle
+### 2. Install Tor
 
-**Windows:** Download the **Expert Bundle** (not the Browser) from [torproject.org](https://www.torproject.org/download/tor/). Extract it so you have a directory containing `tor/tor.exe`.
+**Windows:** Download the [Tor Expert Bundle](https://www.torproject.org/download/tor/) (not the Browser). Extract so you have `tor/tor.exe`.
 
-**Linux:** `sudo apt install tor` (Debian/Ubuntu) or `sudo dnf install tor` (Fedora). The binary will be at `/usr/bin/tor`.
+**Linux:** `sudo apt install tor` (Debian/Ubuntu) or `sudo dnf install tor` (Fedora).
 
-**macOS:** `brew install tor`. The binary will be at `/usr/local/bin/tor` or `/opt/homebrew/bin/tor`.
+**macOS:** `brew install tor`
 
-By default, Tor Army looks for a `tor/` directory next to `tor_army.py`. You can override this:
+Tell the scraper where Tor is:
 
 ```bash
-# Option A: put Tor next to the script (Windows Expert Bundle layout)
+# Option A: put the Expert Bundle next to the script
 tor-army/
   tor_army.py
-  tor/            # <-- extract Tor Expert Bundle here
-    tor/tor.exe   # (Windows) or tor/tor (Linux/Mac)
+  tor/              # Tor Expert Bundle extracted here
+    tor/tor.exe     # or tor/tor on Linux/Mac
     data/geoip
     data/geoip6
 
-# Option B: use a flag (works with any Tor installation)
-python tor_army.py --tor-dir /usr/share/tor ...        # Linux package
-python tor_army.py --tor-dir /opt/homebrew/share/tor ...  # macOS Homebrew
-
-# Option C: use an environment variable
+# Option B: flag or env var
+python tor_army.py --tor-dir /path/to/tor ...
 export TOR_DIR=/path/to/tor
 ```
 
 ### 3. Generate ID lists
 
-The scraper needs ID lists to know which pages to fetch. These are generated from Wago DB2 CSV exports.
+The scraper reads ID lists from `id_lists/{target}.txt` (one ID per line). For Wowhead, generate these from [Wago DB2 CSV exports](https://wago.tools/db2):
 
 ```bash
-# Export CSVs from https://wago.tools/db2 (or extract from client data files)
-# Place them in a directory — expected naming: {TableName}-enUS.csv
-
 python generate_id_lists.py --csv-dir /path/to/wago-csvs/
-
-# Generate for specific targets only
-python generate_id_lists.py --csv-dir /path/to/wago-csvs/ --targets npc,quest
-
-# Preview counts without writing files
-python generate_id_lists.py --csv-dir /path/to/wago-csvs/ --stats
+python generate_id_lists.py --csv-dir /path/to/wago-csvs/ --stats    # preview only
 ```
+
+For non-Wowhead targets, just create the text files yourself — one ID per line.
 
 ### 4. Scrape
 
 ```bash
-# Launch with defaults (400 Tor instances x 5 workers = 2,000 concurrent)
+# Default: 400 Tor instances x 5 workers = 2,000 concurrent
 python tor_army.py --start-tor --targets spell,item,npc,quest
 
-# Smoke test (10 pages, 5 instances)
+# Smoke test
 python tor_army.py --start-tor --workers 5 --smoke 10 --targets npc
 
-# Aggressive config (4,800 concurrent workers)
+# Aggressive
 python tor_army.py --start-tor --workers 600 --multiplier 8 --targets all
 
-# List available targets with progress
+# Check progress
 python tor_army.py --list-targets
 
-# Re-parse cached HTML without network
+# Re-parse cached HTML offline
 python tor_army.py --targets npc --reparse
 
-# Kill leftover Tor instances
+# Kill leftover Tor processes
 python tor_army.py --kill-tor
 ```
 
-Output goes to `wowhead_data/{target}/raw/` (parsed JSON) and `wowhead_data/{target}/html/` (cached gzip HTML). The scraper automatically skips IDs that already have output files, so you can stop and resume freely.
+Output goes to `wowhead_data/{target}/raw/` (JSON) and `wowhead_data/{target}/html/` (gzip HTML). Already-scraped IDs are skipped automatically.
 
 ## How It Works
 
-### HTTP/2 Multiplexing
+Each Tor instance gets one shared HTTP/2 connection. Multiple workers send concurrent requests as HTTP/2 streams on that connection. This gives you N workers per instance but only 1 file descriptor per instance.
 
-Most Tor scrapers create one TCP connection per request — wasteful and FD-hungry. Tor Army shares a single HTTP/2 connection per Tor instance. Multiple workers send concurrent requests as **HTTP/2 streams** on that one connection.
+Five throttling layers prevent WAF blocks:
 
-This means:
-- **400 Tor instances = 400 file descriptors** (not 2,000)
-- Windows `select()` 512 FD limit is no longer a bottleneck
-- TLS handshake overhead amortized across all workers per instance
-- You can crank the multiplier to 8-10 without hitting OS limits
-
-```
-                    ┌── Worker 1 ──┐
-                    │── Worker 2 ──│── HTTP/2 streams ──▶ 1 TCP connection ──▶ Tor SOCKS5
-                    │── Worker 3 ──│                      (1 file descriptor)
-                    │── Worker 4 ──│
-                    └── Worker 5 ──┘
-```
-
-### Five-Layer Throttle Stack
-
-Each layer prevents a different failure mode:
-
-| Layer | What | Why |
-|-------|------|-----|
-| **Per-instance rate limiter** | Min interval between requests from same exit IP | Prevents Cloudflare per-IP rate limits |
-| **Adaptive delay** | Adjusts based on WAF hits/minute across all workers | Backs off when Cloudflare gets suspicious |
-| **Circuit rotation** | New exit IP every 150 requests | Prevents long-term IP reputation damage |
-| **Jittered backoff** | Exponential backoff on consecutive errors | Handles Tor circuit failures gracefully |
-| **WAF-triggered rotation** | Immediate circuit + session reset on 403 | Abandons burned IPs instantly |
-
-### Architecture
-
-```
-┌─────────────────────────────────────────────────┐
-│  Tor Army Orchestrator (asyncio event loop)     │
-│                                                 │
-│  ┌─────────┐ ┌─────────┐       ┌─────────┐    │
-│  │Worker 1 │ │Worker 2 │  ...  │Worker N │    │
-│  │(async)  │ │(async)  │       │(async)  │    │
-│  └────┬────┘ └────┬────┘       └────┬────┘    │
-│       │           │                 │          │
-│  ┌────┴────┐ ┌────┴────┐       ┌───┴─────┐   │
-│  │  Tor    │ │  Tor    │  ...  │  Tor    │   │
-│  │Instance1│ │Instance1│       │InstanceN│   │
-│  │(HTTP/2) │ │(HTTP/2) │       │(HTTP/2) │   │
-│  └────┬────┘ └────┬────┘       └────┬────┘   │
-└───────┼───────────┼─────────────────┼─────────┘
-        │           │                 │
-   ┌────┴────┐ ┌────┴────┐      ┌────┴────┐
-   │  Tor 1  │ │  Tor 1  │ ...  │  Tor N  │
-   │SOCKS5h  │ │SOCKS5h  │      │SOCKS5h  │
-   │:9050    │ │:9050    │      │:9050+2N │
-   └────┬────┘ └────┬────┘      └────┬────┘
-        │           │                 │
-   [Exit Node A] [Exit Node A]  [Exit Node Z]
-        │           │                 │
-        └───────────┴────────┬────────┘
-                             │
-                    ┌────────┴────────┐
-                    │   Cloudflare    │
-                    │  (WAF / CDN)   │
-                    └────────┬────────┘
-                             │
-                    ┌────────┴────────┐
-                    │   Target Site   │
-                    └─────────────────┘
-```
-
-Workers sharing a Tor instance send HTTP/2 streams on a single multiplexed connection, reducing FD count from N-per-instance to 1-per-instance. Rate limiting prevents WAF bursts per exit IP. Each instance rotates circuits every 150 requests for IP freshness.
+1. **Per-instance rate limiter** — minimum interval between requests from the same exit IP
+2. **Adaptive delay** — backs off based on WAF hits per minute
+3. **Circuit rotation** — new exit IP every 150 requests
+4. **Jittered exponential backoff** — on consecutive errors
+5. **WAF-triggered rotation** — immediate circuit reset on 403
 
 ## Configuration
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--workers` | 400 | Tor instances to run (~25MB RAM each) |
-| `--multiplier` | 5 | Async workers per instance (HTTP/2 streams) |
+| `--workers` | 400 | Tor instances (~25MB RAM each) |
+| `--multiplier` | 5 | Workers per instance (HTTP/2 streams) |
 | `--delay` | 0.15 | Base delay between requests (seconds) |
 | `--per-circuit` | 150 | Requests before circuit rotation |
 | `--cache-html` | true | Cache raw HTML as gzip |
 | `--targets` | npc | Comma-separated entity types |
-| `--tor-dir` | `./tor/` | Path to Tor Expert Bundle (or set `TOR_DIR` env var) |
+| `--tor-dir` | `./tor/` | Tor installation path (or `TOR_DIR` env var) |
 
-## Scaling Guide
+## Scaling
 
-| Config | Workers | FDs | RAM | Expected Rate |
-|--------|---------|-----|-----|---------------|
-| 400x5 | 2,000 | 400 | ~10 GB | ~500K+/hr |
-| 400x8 | 3,200 | 400 | ~10 GB | ~600-700K/hr |
-| 600x5 | 3,000 | 600 | ~15 GB | ~600-800K/hr |
-| 600x8 | 4,800 | 600 | ~15 GB | ~700K-1M/hr |
-| 800x5 | 4,000 | 800 | ~20 GB | ~650-850K/hr |
+| Config | Workers | RAM | Rate |
+|--------|---------|-----|------|
+| 400x5 | 2,000 | ~10 GB | ~500K+/hr |
+| 600x5 | 3,000 | ~15 GB | ~600-800K/hr |
+| 600x8 | 4,800 | ~15 GB | ~700K-1M/hr |
 
-### Why returns diminish
+Returns diminish past ~600 instances. There are only ~1,000-1,500 Tor exit nodes globally — past that you're sharing exit IPs between instances and hitting the same Cloudflare rate limits.
 
-The ceiling isn't your hardware — it's **Tor exit node diversity**. There are only ~1,000-1,500 Tor exit nodes globally. At ~600 instances, you've covered ~40% of them. Past that, new instances increasingly share exit IPs with existing ones, so you're hitting the same Cloudflare rate limits from the same IPs.
+## Adapting to Other Targets
 
-| Instances | Exit Node Coverage | Value |
-|-----------|-------------------|-------|
-| 400 | ~27% | Sweet spot — good diversity, low overhead |
-| 600 | ~40% | Diminishing returns start |
-| 800 | ~53% | Significant IP overlap |
-| 1,500 | ~100% | Fully saturated — every exit node used |
+The Wowhead parsers and ID generator are specific to my use case. The scraping engine is not. To scrape a different site:
 
-### Completion time for 1.1M pages
+1. **`TARGET_CONFIGS`** in `tor_army.py` — change URL patterns
+2. **`parsers.py`** — replace with your own HTML parsers, or skip parsing and just cache raw HTML
+3. **`id_lists/{target}.txt`** — create your own ID/URL lists (one per line)
+4. **WAF detection** — the code looks for HTTP 403 and `cf-challenge` in the response, which is Cloudflare-specific. Adjust `async_worker()` for other WAFs
 
-| Rate | Time |
-|------|------|
-| 500K/hr | ~2.2 hours |
-| 700K/hr | ~1.6 hours |
-| 1M/hr | ~1.1 hours |
-
-### Why HTTP/2 multiplexing matters
-
-Without multiplexing, each worker opens its own TCP connection through Tor — one file descriptor per worker. Windows `select()` has a hard 512 FD limit, which means you need a monkey-patch just to run 400x3 (1,200 FDs).
-
-With multiplexing, all workers on the same Tor instance share one TCP connection as HTTP/2 streams. 400 instances = 400 FDs, regardless of multiplier. You can push the multiplier to 10 (4,000 workers on 400 FDs) without touching the OS limit.
-
-| Config | FDs (old) | FDs (HTTP/2) | Needs patch? |
-|--------|-----------|--------------|-------------|
-| 400x3 | 1,200 | 400 | No |
-| 400x5 | 2,000 | 400 | No |
-| 400x10 | 4,000 | 400 | No |
-| 600x8 | 4,800 | 600 | Safety net only |
-| 800x5 | 4,000 | 800 | Safety net only |
+Everything else — Tor fleet management, HTTP/2 multiplexing, circuit rotation, rate limiting, the live dashboard — is target-agnostic.
 
 ## Requirements
 
 - Python 3.11+
 - Windows, Linux, or macOS
-- [Tor](https://www.torproject.org/download/tor/) — Expert Bundle (Windows) or system package (Linux/Mac)
+- [Tor](https://www.torproject.org/download/tor/)
 - ~25 MB RAM per Tor instance
-
-## Adapting to Other Targets
-
-This scraper was built for [Wowhead](https://www.wowhead.com/) to extract game data for [TrinityCore](https://www.trinitycore.org/) private server development. The 39 entity parsers and ID list generator are Wowhead-specific.
-
-**The scraping engine itself is target-agnostic.** To scrape a different site:
-
-1. **`TARGET_CONFIGS`** in `tor_army.py` — change the URL patterns to your target site
-2. **`parsers.py`** — replace with your own HTML parsers (or remove parsing and just cache raw HTML with `--cache-html`)
-3. **`generate_id_lists.py`** — replace with your own ID/URL list generation, or just create `id_lists/{target}.txt` files manually (one ID per line)
-4. **Throttling** — adjust `--delay` and `--per-circuit` based on your target's rate limits. The adaptive WAF throttling looks for HTTP 403 responses and `cf-challenge` in the HTML, which is Cloudflare-specific — you may need to adjust the WAF detection logic in `async_worker()` for other WAFs
-
-Everything else — Tor fleet management, HTTP/2 multiplexing, circuit rotation, rate limiting, the live dashboard — works for any target.
-
-## Related
-
-- [lambda-swarm](https://github.com/VoxCore84/lambda-swarm) — The AWS Lambda approach we built first (works for non-Cloudflare sites)
 
 ## License
 
