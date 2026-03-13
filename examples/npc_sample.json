@@ -1,0 +1,27 @@
+{
+  "id": 147991,
+  "name": "Zandalari Warrior",
+  "tooltip": "<table>\n    <tr><td><b class=\"q\">Zandalari Warrior</b></td></tr>\n<tr><td>Level 60 Humanoid (Normal)</td></tr></table>\n",
+  "map": {
+    "zone": 8500,
+    "coords": {
+      "0": [
+        [38.4, 77.0],
+        [39.0, 75.8],
+        [39.2, 78.6],
+        [39.4, 76.8],
+        [39.4, 78.4],
+        [39.4, 79.6],
+        [39.6, 75.4],
+        [39.6, 76.0],
+        [39.8, 77.0],
+        [40.2, 78.0],
+        [40.2, 79.2],
+        [40.2, 79.6],
+        [41.0, 77.4],
+        [41.0, 77.6]
+      ]
+    }
+  },
+  "completion_category": 7
+}

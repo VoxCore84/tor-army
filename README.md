@@ -1,5 +1,7 @@
 # Tor Army v3
 
+[![CI](https://github.com/VoxCore84/tor-army/actions/workflows/ci.yml/badge.svg)](https://github.com/VoxCore84/tor-army/actions/workflows/ci.yml)
+
 Massively parallel async web scraper that routes through a fleet of Tor instances for IP diversity. Built for scraping Cloudflare-protected sites where cloud IPs get instantly blocked.
 
 I originally built this to scrape [Wowhead](https://www.wowhead.com/) for [TrinityCore](https://www.trinitycore.org/) private server data. The 39 entity parsers and ID list generator are Wowhead-specific, but the scraping engine works for any target — see [Adapting to Other Targets](#adapting-to-other-targets).
@@ -10,7 +12,7 @@ Cloudflare blocklists all major cloud IP ranges (AWS, GCP, Azure, etc.). I [trie
 
 Tor exit nodes run on residential ISPs, university networks, and volunteer hosts. Cloudflare doesn't blocklist them the way it does datacenters.
 
-**Measured performance:** 500K+ pages/hr at 400 Tor instances on a single machine. Under 1% Cloudflare block rate.
+**Measured performance:** 198K pages/hr peak at 240 Tor instances × 2 workers (pre-HTTP/2). Scraped 993K+ Wowhead pages across 39 entity types. Under 1% Cloudflare block rate. HTTP/2 multiplexing (v3.2) pushes this higher with more workers per instance — see [Scaling](#scaling).
 
 ## Features
 
@@ -117,11 +119,13 @@ Five throttling layers prevent WAF blocks:
 
 ## Scaling
 
-| Config | Workers | RAM | Rate |
-|--------|---------|-----|------|
-| 400x5 | 2,000 | ~10 GB | ~500K+/hr |
-| 600x5 | 3,000 | ~15 GB | ~600-800K/hr |
-| 600x8 | 4,800 | ~15 GB | ~700K-1M/hr |
+| Config | Workers | RAM | Measured |
+|--------|---------|-----|---------|
+| 240x2 | 480 | ~6 GB | 160-198K/hr (actual, logged) |
+| 400x5 | 2,000 | ~10 GB | ~500K/hr (projected) |
+| 600x8 | 4,800 | ~15 GB | untested |
+
+The 240×2 numbers are from real runs scraping 993K Wowhead pages. The 400×5 projection is based on HTTP/2 multiplexing reducing the FD bottleneck — not yet verified at scale.
 
 Returns diminish past ~600 instances. There are only ~1,000-1,500 Tor exit nodes globally — past that you're sharing exit IPs between instances and hitting the same Cloudflare rate limits.
 
@@ -130,11 +134,13 @@ Returns diminish past ~600 instances. There are only ~1,000-1,500 Tor exit nodes
 The Wowhead parsers and ID generator are specific to my use case. The scraping engine is not. To scrape a different site:
 
 1. **`TARGET_CONFIGS`** in `tor_army.py` — change URL patterns
-2. **`parsers.py`** — replace with your own HTML parsers, or skip parsing and just cache raw HTML
+2. **`parsers.py`** — replace with your own HTML parsers, or skip parsing and just cache raw HTML. See [`parser_template.py`](parser_template.py) for a working skeleton
 3. **`id_lists/{target}.txt`** — create your own ID/URL lists (one per line)
 4. **WAF detection** — the code looks for HTTP 403 and `cf-challenge` in the response, which is Cloudflare-specific. Adjust `async_worker()` for other WAFs
 
 Everything else — Tor fleet management, HTTP/2 multiplexing, circuit rotation, rate limiting, the live dashboard — is target-agnostic.
+
+See [`examples/`](examples/) for sample output from real scrapes.
 
 ## Requirements
 

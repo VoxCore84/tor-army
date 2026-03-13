@@ -1,0 +1,21 @@
+{
+  "id": 86942,
+  "name": "Culling the Spread",
+  "objectives": "Slay the visiting rutaani merchants and Koozat.",
+  "requirements": [
+    "Koozat",
+    "Keem",
+    "Rizam",
+    "Teetem"
+  ],
+  "level": 83,
+  "reqlevel": 83,
+  "category": 15355,
+  "category2": 19,
+  "side": 3,
+  "money": 638000,
+  "xp": 15215,
+  "description_text": "Koozat",
+  "progress_text": "I raised Koozat since he was small enough to fit in my hands. The Lightbloom does not discriminate who it infects.",
+  "completion_text": "It is done, then. I grieve that this was necessary, but the corruption needed to be pruned before it could spread further."
+}

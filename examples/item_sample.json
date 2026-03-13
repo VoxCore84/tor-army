@@ -1,0 +1,85 @@
+{
+  "id": 18540,
+  "name": "Sealed Reliquary of Purity",
+  "listviews": {
+    "created-by-spell": [
+      {
+        "cat": -26,
+        "creates": [18540, 1, 1],
+        "displayName": "Seal Felvine Shard",
+        "id": 22949,
+        "level": 0,
+        "name": "Seal Felvine Shard",
+        "quality": 1,
+        "reagents": [[18501, 1]],
+        "schools": 1,
+        "popularity": 9
+      }
+    ],
+    "objective-of": [
+      {
+        "category": 2557,
+        "category2": 2,
+        "id": 27103,
+        "level": 15,
+        "money": 309800,
+        "name": "Shards of the Felvine",
+        "reqlevel": 15,
+        "side": 3,
+        "type": 81,
+        "wflags": 128,
+        "xp": 4180
+      }
+    ]
+  },
+  "g_data": {
+    "g_items": {
+      "classs": 12,
+      "displayName": "Sealed Reliquary of Purity",
+      "flags2": 8192,
+      "id": 18540,
+      "level": 1,
+      "name": "Sealed Reliquary of Purity",
+      "quality": 1,
+      "slot": 0,
+      "subclass": 0,
+      "jsonequip": {
+        "quality": 1,
+        "classs": 12,
+        "displayName": "Sealed Reliquary of Purity",
+        "flags2": 8192,
+        "id": 18540,
+        "level": 1,
+        "name": "Sealed Reliquary of Purity",
+        "slot": 0,
+        "subclass": 0,
+        "itemSquishEraId": 0,
+        "maxcount": 1,
+        "statsInfo": []
+      }
+    }
+  },
+  "infobox": {
+    "side": "None"
+  },
+  "images": {
+    "icons": [
+      "https://wow.zamimg.com/images/wow/icons/large/inv_box_02.jpg"
+    ]
+  },
+  "tooltip": "<table><tr><td><b class=\"q1\">Sealed Reliquary of Purity</b><span class=\"q whtt-extra whtt-ilvl\"><br>Item Level 1</span><br>Quest Item<br>Unique</td></tr></table>",
+  "related_ids": {
+    "items": [18540]
+  },
+  "page_info": {
+    "type": 3,
+    "typeId": 18540,
+    "name": "Sealed Reliquary of Purity"
+  },
+  "classs": 12,
+  "subclass": 0,
+  "quality": 1,
+  "level": 1,
+  "slot": 0,
+  "flags2": 8192
+}

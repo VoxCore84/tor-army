@@ -25,6 +25,9 @@ dependencies = [
     "stem>=1.8",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
 [tool.setuptools]
 py-modules = ["tor_army", "parsers", "generate_id_lists"]
 
