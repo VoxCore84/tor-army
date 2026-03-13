@@ -254,6 +254,19 @@ With multiplexing, all workers on the same Tor instance share one TCP connection
 - [Tor](https://www.torproject.org/download/tor/) — Expert Bundle (Windows) or system package (Linux/Mac)
 - ~25 MB RAM per Tor instance
 
+## Adapting to Other Targets
+
+This scraper was built for [Wowhead](https://www.wowhead.com/) to extract game data for [TrinityCore](https://www.trinitycore.org/) private server development. The 39 entity parsers and ID list generator are Wowhead-specific.
+
+**The scraping engine itself is target-agnostic.** To scrape a different site:
+
+1. **`TARGET_CONFIGS`** in `tor_army.py` — change the URL patterns to your target site
+2. **`parsers.py`** — replace with your own HTML parsers (or remove parsing and just cache raw HTML with `--cache-html`)
+3. **`generate_id_lists.py`** — replace with your own ID/URL list generation, or just create `id_lists/{target}.txt` files manually (one ID per line)
+4. **Throttling** — adjust `--delay` and `--per-circuit` based on your target's rate limits. The adaptive WAF throttling looks for HTTP 403 responses and `cf-challenge` in the HTML, which is Cloudflare-specific — you may need to adjust the WAF detection logic in `async_worker()` for other WAFs
+
+Everything else — Tor fleet management, HTTP/2 multiplexing, circuit rotation, rate limiting, the live dashboard — works for any target.
+
 ## Related
 
 - [lambda-swarm](https://github.com/VoxCore84/lambda-swarm) — The AWS Lambda approach we built first (works for non-Cloudflare sites)
