@@ -12,7 +12,7 @@ Cloudflare blocklists all major cloud IP ranges (AWS, GCP, Azure, etc.). I [trie
 
 Tor exit nodes run on residential ISPs, university networks, and volunteer hosts. Cloudflare doesn't blocklist them the way it does datacenters.
 
-**Measured performance:** 198K pages/hr peak at 240 Tor instances × 2 workers (pre-HTTP/2). Scraped 993K+ Wowhead pages across 39 entity types. Under 1% Cloudflare block rate. HTTP/2 multiplexing (v3.2) pushes this higher with more workers per instance — see [Scaling](#scaling).
+**Measured performance:** 230K pages/hr peak, 193K sustained at 400 Tor instances × 5 workers on a single machine. 1.2M Wowhead pages scraped across 39 entity types. Under 1% Cloudflare block rate.
 
 ## Features
 
@@ -121,11 +121,11 @@ Five throttling layers prevent WAF blocks:
 
 | Config | Workers | RAM | Measured |
 |--------|---------|-----|---------|
-| 240x2 | 480 | ~6 GB | 160-198K/hr (actual, logged) |
-| 400x5 | 2,000 | ~10 GB | ~500K/hr (projected) |
+| 240x2 | 480 | ~6 GB | 160-198K/hr |
+| 400x5 | 2,000 | ~10 GB | 193-230K/hr |
 | 600x8 | 4,800 | ~15 GB | untested |
 
-The 240×2 numbers are from real runs scraping 993K Wowhead pages. The 400×5 projection is based on HTTP/2 multiplexing reducing the FD bottleneck — not yet verified at scale.
+All numbers are from real runs scraping Wowhead (1.2M pages total). The ceiling is Tor exit node diversity (~1,500 globally), not hardware — 400 instances already overlap significantly.
 
 Returns diminish past ~600 instances. There are only ~1,000-1,500 Tor exit nodes globally — past that you're sharing exit IPs between instances and hitting the same Cloudflare rate limits.
 

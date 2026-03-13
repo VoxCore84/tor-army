@@ -14,9 +14,9 @@ Major upgrades over v2:
   - Scale-ready for 400+ Tor instances (128GB RAM headroom)
   - Live dashboard with rate, WAF/min, per-target breakdown, ETA
 
-  Performance targets:
-  v2: 315K pages/hr (240 workers, threading, GIL)
-  v3: 500K-1M pages/hr (400 instances x 5 multiplier, async + HTTP/2)
+  Measured performance:
+  v2: 198K pages/hr peak (240 instances x 2 workers, threading)
+  v3: 234K pages/hr sustained (400 instances x 5 workers, async + HTTP/2)
 
 Usage:
     python tor_army.py --start-tor --workers 400 --targets npc
