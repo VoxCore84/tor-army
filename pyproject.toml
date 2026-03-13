@@ -15,7 +15,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Topic :: Internet :: WWW/HTTP",
@@ -25,6 +24,9 @@ dependencies = [
     "curl-cffi>=0.7",
     "stem>=1.8",
 ]
+
+[tool.setuptools]
+py-modules = ["tor_army", "parsers", "generate_id_lists"]
 
 [project.scripts]
 tor-army = "tor_army:main"
